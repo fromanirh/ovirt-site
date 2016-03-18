@@ -147,31 +147,72 @@ Summary:
 
 Discussion: TO BE FILLED
 
-### Early implementation thoughts
 
-*   Native support or hooks?
+### How to try the feature
 
-To implement container support leveraging hooks seems hard. The main challenge is that a container could (and should) retrofitted into a Vm object, but this object will not have an underlying libvirt Domain, thus will be unknown to libvirt. All the VDSM flows require interaction with libvirt, then all libvirt calls will fail. OTOH, we can add a new Container class which can expose the same Vm API, and do the smartest thing
+We want to offer early access to this feature, to gather feedback as soon as possible. Just bear in mind
+that the feature is in development stage, pre-technical-preview quality. Engine integration is in early
+planning stage, so expect some hiccups.
+We recommend a dedicated setup to try out this feature.
+You will need to install Vdsm from source.
 
-*   Just replace the underlying domain, or reimplement it in terms of Container needs
+1. prepare a regular oVirt installation. One virtualization host is sufficient. Storage should be file-based:
+   either shared NFS storage or local posix FS storage.
 
-This is feasible and could give some benefits (see also below). Currently being evaluated
+2. install `rkt' >= 1.0 on that host.
+   Please refer to the [official documentation](https://coreos.com/rkt/docs/latest/) for this.
+   Please note that there are packages for Fedora 24 available. We will provide spec files for Centos 7.x in the near future.
+   Installation from sources is fine. Make sure 'rkt' works, maybe using [those instructions](https://github.com/coreos/rkt/blob/master/Documentation/getting-started-guide.md)
 
-*   Redesign Vm class
+   *CAVEAT*: If you are using selinux, [you may need to disable it to run rkt containers](https://github.com/coreos/rkt/issues/1882)
 
-If we add a Container class, which will be related to Vm class, this opens the gate to a possible Vm redesign. We are still committed to do this redesign, but this redesign alone is a gargantuan effort, which must be tackled not by a single developer. We don't believe there is capacity and time to tackle this redesign in the context of this feature. We should instead take every chance to clean up, split up and streamline Vm class along the way, to make as much room as possible for such redesign.
+3. Install the [container runtime python module](https://github.com/mojaves/convirt), codename 'convirt'.
+   This is a regular python package, so it is installable using the [standard means](https://docs.python.org/2/install/).
+   Availability of RPM/deb packages and uploading on [PyPI](https://pypi.python.org/pypi) is planned for near future.
 
-*   Container support gap: supervising daemon
+4. [Fetch Vdsm from gerrit](http://www.ovirt.org/develop/developer-guide/vdsm/developers/). Please use the master branch, and
+   apply [this patch series](https://gerrit.ovirt.org/#/q/topic:container-support) on top of the master branch. Don't be
+   scared by patch named 'WIP' or 'HACK', they are just reminder that the posted solution isn't the final one.
+   [Rebuild and install Vdsm](http://www.ovirt.org/develop/developer-guide/vdsm/developers/). Make sure to install the
+   'imagerepo' hook (provided by [this patch](https://gerrit.ovirt.org/#/c/54873/) you should already applied).
 
-currently libvirtd supervises the VMs, in the context of containers we could need a replacement (runc). We can leverage systemd-run to do this task
+5. Make sure Vdsm works. Try running
 
-*   Container support gap: collecting stats
+     # vdsClient -s 0 getVdsCaps
 
-If we use systemd-run, we could use systemd-cgtop to collect the stats we need. Preliminary analysis shows it should provide all the relevant data
+   from the host on which you reinstalled the patched Vdsm. Make sure you see the following in the output
 
-*   Engine support
+     additionalFeatures = [{'containers': ['rkt']}]
 
-Changes could be minimal. We expect the first draft to be almost entirely opaque to Engine
+   If you can see this, congrats! your Vdsm can run containers
+
+6. Prepare the image repository on the virtualization host. This is needed because you can't yet upload
+   externally build images on Storage Data Domain. Any directory on the virtualization host is fine, make
+   sure is writable by `vdsm:kvm`. Upload there all the images you want to use.
+
+   Example:
+
+     /srv/container/images
+
+7. You can use any 3.6.x Engine to try this feature. You just need to define few custom properties:
+
+     # engine-config -s UserDefinedVMProperties='imagerepo=^/srv/convirt/data$;imagename=^hello-0.0.1-linux-amd64.aci$;container=^(rkt|runc)$' --cver=3.6
+
+8. Define one or more Vms, to be used as decoys for containers. This is needed because Engine hasn't yet gained
+   explicit supports for containers, so it knows only about VMs.
+
+   *CAVEAT*: You don't need a disk for each Vm (container support will ignore it and use images
+   see below), but Engine won't let you start a Vm without a boot device. You may want to use PXE boot to workaround
+   around this. The container runtime will ignore this setting, is just to pass Engine's check
+
+9. In the phony VMs you defined, make sure you enable the two custom variables you created in step #8
+
+    * `imagerepo` should be set to the path you prepared on the host in step #6 (example: `/srv/container/images`)
+    * `imagename` full name of the container you want to run. The corresponding image must be present into `imagerepo` directory on the virtualization host.
+    * `container` should be set to `rkt` (no other container runtime are supported yet)
+
+10. You can now run the container! just pick it from the VM listing and run it.
+   Containers can't migrate or be hibernated/restored, and monitoring is not yet supported.
 
 
 ### Patches/code
